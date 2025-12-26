@@ -21,7 +21,7 @@ permissions:
   contents: write
   checks: write
   issues: write
-  metadata: read
+  # 'metadata' permission removed: not accepted by all GitHub Actions schemas
 
 jobs:
   publish:
