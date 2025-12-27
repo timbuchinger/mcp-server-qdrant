@@ -22,6 +22,11 @@ DEFAULT_TOOL_HYBRID_FIND_DESCRIPTION = (
     " - To find content that matches both concepts and specific terms \n"
     " - Superior search quality using RRF or DBSF fusion methods"
 )
+DEFAULT_TOOL_ADD_NOTE_DESCRIPTION = (
+    "Add a structured note to Qdrant. Use this tool when you need to store notes with specific metadata "
+    "such as commands, code snippets, API references, or learning materials. "
+    "The note will be automatically tagged and categorized for easy retrieval."
+)
 
 METADATA_PATH = "metadata"
 
@@ -42,6 +47,10 @@ class ToolSettings(BaseSettings):
     tool_hybrid_find_description: str = Field(
         default=DEFAULT_TOOL_HYBRID_FIND_DESCRIPTION,
         validation_alias="TOOL_HYBRID_FIND_DESCRIPTION",
+    )
+    tool_add_note_description: str = Field(
+        default=DEFAULT_TOOL_ADD_NOTE_DESCRIPTION,
+        validation_alias="TOOL_ADD_NOTE_DESCRIPTION",
     )
 
 
