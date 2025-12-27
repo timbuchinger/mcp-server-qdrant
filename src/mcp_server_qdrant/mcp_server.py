@@ -124,6 +124,78 @@ class QdrantMCPServer(FastMCP):
                 return f"Remembered: {information} in collection {collection_name}"
             return f"Remembered: {information}"
 
+        async def add_note(
+            ctx: Context,
+            text: Annotated[str, Field(description="The primary knowledge content")],
+            context: Annotated[
+                str,
+                Field(description="Explains when / why / how the text is useful"),
+            ],
+            type: Annotated[
+                str,
+                Field(
+                    description="Type of note: cli | api | learning | snippet | pattern"
+                ),
+            ],
+            created_at: Annotated[
+                str,
+                Field(
+                    description="ISO-8601 formatted timestamp of when the knowledge was recorded"
+                ),
+            ],
+            tool: Annotated[
+                str | None, Field(description="Tool or command name (optional)")
+            ] = None,
+            tags: Annotated[
+                list[str] | None,
+                Field(description="List of tags for categorization (optional)"),
+            ] = None,
+            language: Annotated[
+                str | None,
+                Field(description="Programming language if applicable (optional)"),
+            ] = None,
+            source: Annotated[
+                str | None, Field(description="Source or reference URL (optional)")
+            ] = None,
+        ) -> str:
+            """
+            Add a structured note to Qdrant with specific metadata.
+            Uses the default collection specified via environment variable.
+            :param ctx: The context for the request.
+            :param text: The main text content of the note.
+            :param context: Context or description about when/why this note is useful.
+            :param type: Type of note (cli, api, learning, snippet, or pattern).
+            :param created_at: ISO-8601 formatted timestamp.
+            :param tool: Optional tool or command name.
+            :param tags: Optional list of tags.
+            :param language: Optional programming language.
+            :param source: Optional source or reference URL.
+            :return: A message indicating that the note was stored.
+            """
+            await ctx.debug(f"Adding note: {text[:50]}... with type {type}")
+
+            # Build the metadata dictionary
+            metadata: Metadata = {
+                "context": context,
+                "type": type,
+                "created_at": created_at,
+            }
+
+            # Add optional fields if provided
+            if tool is not None:
+                metadata["tool"] = tool
+            if tags is not None:
+                metadata["tags"] = tags
+            if language is not None:
+                metadata["language"] = language
+            if source is not None:
+                metadata["source"] = source
+
+            entry = Entry(content=text, metadata=metadata)
+            await self.qdrant_connector.store(entry, collection_name=None)
+
+            return f"Note added: {text[:50]}... (type: {type})"
+
         async def find(
             ctx: Context,
             query: Annotated[str, Field(description="What to search for")],
@@ -228,6 +300,7 @@ class QdrantMCPServer(FastMCP):
 
         find_foo = find
         store_foo = store
+        add_note_foo = add_note
         hybrid_find_foo = hybrid_find
 
         filterable_conditions = (
@@ -273,4 +346,9 @@ class QdrantMCPServer(FastMCP):
                 store_foo,
                 name="qdrant-store",
                 description=self.tool_settings.tool_store_description,
+            )
+            self.tool(
+                add_note_foo,
+                name="qdrant-add-note",
+                description=self.tool_settings.tool_add_note_description,
             )
