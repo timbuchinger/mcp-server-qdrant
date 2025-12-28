@@ -1,203 +1,112 @@
-# mcp-server-qdrant: A Qdrant MCP server
+# mcp-server-qdrant — Notes-focused fork for storing and retrieving notes
 
-[![smithery badge](https://smithery.ai/badge/mcp-server-qdrant)](https://smithery.ai/protocol/mcp-server-qdrant)
+This is a forked version of the original repository, adapted specifically for storing, managing and retrieving
+structured notes in Qdrant. It exposes a small set of MCP tools optimized for note workflows (add/update/delete/search).
 
-> The [Model Context Protocol (MCP)](https://modelcontextprotocol.io/introduction) is an open protocol that enables
-> seamless integration between LLM applications and external data sources and tools. Whether you're building an
-> AI-powered IDE, enhancing a chat interface, or creating custom AI workflows, MCP provides a standardized way to
-> connect LLMs with the context they need.
-
-This repository is an example of how to create a MCP server for [Qdrant](https://qdrant.tech/), a vector search engine.
+The Model Context Protocol (MCP) enables LLMs to call external tools to fetch or store contextual information. This
+server uses Qdrant as the backing vector store.
 
 ## Overview
 
-An official Model Context Protocol server for keeping and retrieving memories in the Qdrant vector search engine.
-It acts as a semantic memory layer on top of the Qdrant database.
+This fork provides a compact MCP server that focuses on structured note storage and retrieval backed by Qdrant.
 
 ## Components
 
-### Tools
+### Tools (registered)
 
-1. `qdrant-store`
-   - Store some information in the Qdrant database
-   - Input:
-     - `information` (string): Information to store
-     - `metadata` (JSON): Optional metadata to store
-     - `collection_name` (string): Name of the collection to store the information in. This field is required if there are no default collection name.
-                                   If there is a default collection name, this field is not enabled.
-   - Returns: Confirmation message
-2. `qdrant-find`
-   - Retrieve relevant information from the Qdrant database using semantic search
-   - Input:
-     - `query` (string): Query to use for searching
-     - `collection_name` (string): Name of the collection to search in. This field is required if there are no default collection name.
-                                   If there is a default collection name, this field is not enabled.
-   - Returns: Information stored in the Qdrant database as separate messages
-3. `qdrant-search-notes`
-  - Advanced hybrid search combining semantic similarity and keyword matching using Qdrant's RRF/DBSF fusion
-   - Input:
-     - `query` (string): Query to use for searching
-     - `collection_name` (string): Name of the collection to search in. This field is required if there are no default collection name.
-                                   If there is a default collection name, this field is not enabled.
-     - `fusion_method` (string, optional): Fusion method - "rrf" (Reciprocal Rank Fusion) or "dbsf" (Distribution-Based Score Fusion). Default: "rrf"
-     - `dense_limit` (integer, optional): Maximum results from semantic search. Default: 20
-     - `sparse_limit` (integer, optional): Maximum results from keyword search. Default: 20  
-     - `final_limit` (integer, optional): Final number of results after fusion. Default: 10
-   - Returns: Fused search results combining both semantic understanding and exact keyword matching
+The server registers the following MCP tools (note-focused):
+
+- `qdrant-search-notes`
+  - Purpose: Hybrid search (semantic + keyword) over notes.
+  - Inputs:
+    - `query` (string): Query to search for.
+    - `collection_name` (string): Collection to search in (optional if default collection is configured).
+    - `fusion_method` (string, default: `rrf`): `rrf` or `dbsf` fusion method.
+    - `dense_limit` (int, default: 20): Max results from dense (semantic) search.
+    - `sparse_limit` (int, default: 20): Max results from sparse (keyword) search.
+    - `final_limit` (int, default: 10): Final number of results after fusion.
+    - `query_filter` (optional): Qdrant filter object for restricting results.
+  - Returns: List of matched entries formatted as strings.
+
+- `qdrant-add-note`
+  - Purpose: Add a structured note to the default collection.
+  - Inputs:
+    - `text` (string): Primary note content.
+    - `context` (string): When/why/how the note is useful.
+    - `type` (string): One of `cli`, `api`, `learning`, `snippet`, `pattern`.
+    - `created_at` (string): ISO-8601 timestamp for the note.
+    - `tool` (string, optional): Tool or command name.
+    - `tags` (list[string], optional): Tags for categorization.
+    - `language` (string, optional): Programming language if applicable.
+    - `source` (string, optional): Source or reference URL.
+  - Returns: Confirmation message.
+
+- `qdrant-update-note`
+  - Purpose: Update an existing note by `note_id` in the default collection.
+  - Inputs: `note_id` (string) plus the same metadata fields as `qdrant-add-note`.
+  - Returns: Confirmation message.
+
+- `qdrant-delete-note`
+  - Purpose: Delete a note by `note_id` from the default collection.
+  - Inputs: `note_id` (string).
+  - Returns: Confirmation message.
+
+Note: The original `qdrant-store` / `qdrant-find` tools are not registered in this fork; the above tools are the
+actual registered interfaces. Read-only mode and collection defaults affect which parameters are required.
 
 ## Environment Variables
 
-The configuration of the server is done using environment variables:
+The server is configured using environment variables. Important variables:
 
-| Name                     | Description                                                         | Default Value                                                     |
-|--------------------------|---------------------------------------------------------------------|-------------------------------------------------------------------|
-| `QDRANT_URL`             | URL of the Qdrant server                                            | None                                                              |
-| `QDRANT_API_KEY`         | API key for the Qdrant server                                       | None                                                              |
-| `COLLECTION_NAME`        | Name of the default collection to use.                              | None                                                              |
-| `QDRANT_LOCAL_PATH`      | Path to the local Qdrant database (alternative to `QDRANT_URL`)     | None                                                              |
-| `EMBEDDING_PROVIDER`     | Embedding provider to use (currently only "fastembed" is supported) | `fastembed`                                                       |
-| `EMBEDDING_MODEL`        | Name of the embedding model to use                                  | `sentence-transformers/all-MiniLM-L6-v2`                          |
-| `TOOL_STORE_DESCRIPTION` | Custom description for the store tool                               | See default in [`settings.py`](src/mcp_server_qdrant/settings.py) |
-| `TOOL_FIND_DESCRIPTION`  | Custom description for the find tool                                | See default in [`settings.py`](src/mcp_server_qdrant/settings.py) |
-| `TOOL_HYBRID_FIND_DESCRIPTION` | Custom description for the hybrid find tool                   | See default in [`settings.py`](src/mcp_server_qdrant/settings.py) |
+| Name                | Description                                                    | Default / Notes |
+|---------------------|----------------------------------------------------------------|-----------------|
+| `QDRANT_URL`        | URL of the Qdrant server                                       | None            |
+| `QDRANT_API_KEY`    | API key for the Qdrant server                                  | None            |
+| `COLLECTION_NAME`   | Default collection name to use                                 | None            |
+| `QDRANT_LOCAL_PATH` | Path to local Qdrant database (alternative to `QDRANT_URL`)    | None            |
+| `EMBEDDING_PROVIDER`| Embedding provider (e.g. `fastembed`)                          | `fastembed`     |
+| `EMBEDDING_MODEL`   | Embedding model name                                            | `sentence-transformers/all-MiniLM-L6-v2` |
+| `TOOL_HYBRID_FIND_DESCRIPTION` | Custom description for `qdrant-search-notes` tool   | See `settings.py` |
+| `TOOL_ADD_NOTE_DESCRIPTION`    | Custom description for `qdrant-add-note` tool             | See `settings.py` |
 
-Note: You cannot provide both `QDRANT_URL` and `QDRANT_LOCAL_PATH` at the same time.
+Do not supply both `QDRANT_URL` and `QDRANT_LOCAL_PATH` at the same time.
 
-> [!IMPORTANT]
-> Command-line arguments are not supported anymore! Please use environment variables for all configuration.
+> IMPORTANT: Command-line arguments are not supported — use environment variables for configuration.
 
-### FastMCP Environment Variables
+### FastMCP environment variables
 
-Since `mcp-server-qdrant` is based on FastMCP, it also supports all the FastMCP environment variables. The most
-important ones are listed below:
+The server uses FastMCP; common FastMCP environment variables are supported (e.g. `FASTMCP_HOST`, `FASTMCP_PORT`,
+`FASTMCP_LOG_LEVEL`, etc.).
 
-| Environment Variable                  | Description                                               | Default Value |
-|---------------------------------------|-----------------------------------------------------------|---------------|
-| `FASTMCP_DEBUG`                       | Enable debug mode                                         | `false`       |
-| `FASTMCP_LOG_LEVEL`                   | Set logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL) | `INFO`        |
-| `FASTMCP_HOST`                        | Host address to bind the server to                        | `127.0.0.1`   |
-| `FASTMCP_PORT`                        | Port to run the server on                                 | `8000`        |
-| `FASTMCP_WARN_ON_DUPLICATE_RESOURCES` | Show warnings for duplicate resources                     | `true`        |
-| `FASTMCP_WARN_ON_DUPLICATE_TOOLS`     | Show warnings for duplicate tools                         | `true`        |
-| `FASTMCP_WARN_ON_DUPLICATE_PROMPTS`   | Show warnings for duplicate prompts                       | `true`        |
-| `FASTMCP_DEPENDENCIES`                | List of dependencies to install in the server environment | `[]`          |
+## Installation and running
 
-## Installation
+Using `uvx` (recommended for running as a tool):
 
-### Using uvx
-
-When using [`uvx`](https://docs.astral.sh/uv/guides/tools/#running-tools) no specific installation is needed to directly run *mcp-server-qdrant*.
-
-```shell
+```bash
 QDRANT_URL="http://localhost:6333" \
 COLLECTION_NAME="my-collection" \
 EMBEDDING_MODEL="sentence-transformers/all-MiniLM-L6-v2" \
 uvx mcp-server-qdrant
 ```
 
-#### Transport Protocols
+Transport protocols supported: `stdio` (default), `sse`, and `streamable-http` — choose via the `--transport` flag.
 
-The server supports different transport protocols that can be specified using the `--transport` flag:
-
-```shell
-QDRANT_URL="http://localhost:6333" \
-COLLECTION_NAME="my-collection" \
-uvx mcp-server-qdrant --transport sse
-```
-
-Supported transport protocols:
-
-- `stdio` (default): Standard input/output transport, might only be used by local MCP clients
-- `sse`: Server-Sent Events transport, perfect for remote clients
-- `streamable-http`: Streamable HTTP transport, perfect for remote clients, more recent than SSE
-
-The default transport is `stdio` if not specified.
-
-When SSE transport is used, the server will listen on the specified port and wait for incoming connections. The default
-port is 8000, however it can be changed using the `FASTMCP_PORT` environment variable.
-
-```shell
-QDRANT_URL="http://localhost:6333" \
-COLLECTION_NAME="my-collection" \
-FASTMCP_PORT=1234 \
-uvx mcp-server-qdrant --transport sse
-```
-
-### Using Docker
-
-A Dockerfile is available for building and running the MCP server:
+Run in development mode with the MCP inspector:
 
 ```bash
-# Build the container
-docker build -t mcp-server-qdrant .
-
-# Run the container
-docker run -p 8000:8000 \
-  -e FASTMCP_HOST="0.0.0.0" \
-  -e QDRANT_URL="http://your-qdrant-server:6333" \
-  -e QDRANT_API_KEY="your-api-key" \
-  -e COLLECTION_NAME="your-collection" \
-  mcp-server-qdrant
+COLLECTION_NAME=mcp-dev fastmcp dev src/mcp_server_qdrant/server.py
 ```
 
-> [!TIP]
-> Please note that we set `FASTMCP_HOST="0.0.0.0"` to make the server listen on all network interfaces. This is
-> necessary when running the server in a Docker container.
+## Development notes
 
-### Installing via Smithery
+- The server registers `qdrant-search-notes`, and — when not in read-only mode — `qdrant-add-note`,
+  `qdrant-update-note`, and `qdrant-delete-note`.
+- Tool descriptions and defaults can be adjusted via environment variables and `settings.py`.
 
-To install Qdrant MCP Server for Claude Desktop automatically via [Smithery](https://smithery.ai/protocol/mcp-server-qdrant):
+## License
 
-```bash
-npx @smithery/cli install mcp-server-qdrant --client claude
-```
+Apache License 2.0 — see the `LICENSE` file for details.
 
-### Manual configuration of Claude Desktop
-
-To use this server with the Claude Desktop app, add the following configuration to the "mcpServers" section of your
-`claude_desktop_config.json`:
-
-```json
-{
-  "qdrant": {
-    "command": "uvx",
-    "args": ["mcp-server-qdrant"],
-    "env": {
-      "QDRANT_URL": "https://xyz-example.eu-central.aws.cloud.qdrant.io:6333",
-      "QDRANT_API_KEY": "your_api_key",
-      "COLLECTION_NAME": "your-collection-name",
-      "EMBEDDING_MODEL": "sentence-transformers/all-MiniLM-L6-v2"
-    }
-  }
-}
-```
-
-For local Qdrant mode:
-
-```json
-{
-  "qdrant": {
-    "command": "uvx",
-    "args": ["mcp-server-qdrant"],
-    "env": {
-      "QDRANT_LOCAL_PATH": "/path/to/qdrant/database",
-      "COLLECTION_NAME": "your-collection-name",
-      "EMBEDDING_MODEL": "sentence-transformers/all-MiniLM-L6-v2"
-    }
-  }
-}
-```
-
-This MCP server will automatically create a collection with the specified name if it doesn't exist.
-
-By default, the server will use the `sentence-transformers/all-MiniLM-L6-v2` embedding model to encode memories.
-For the time being, only [FastEmbed](https://qdrant.github.io/fastembed/) models are supported.
-
-## Support for other tools
-
-This MCP server can be used with any MCP-compatible client. For example, you can use it with
-[Cursor](https://docs.cursor.com/context/model-context-protocol) and [VS Code](https://code.visualstudio.com/docs), which provide built-in support for the Model Context
-Protocol.
 
 ### Using with Cursor/Windsurf
 
