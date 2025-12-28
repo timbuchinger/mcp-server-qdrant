@@ -426,11 +426,11 @@ class QdrantMCPServer(FastMCP):
                 {"collection_name": self.qdrant_settings.collection_name},
             )
 
-        # self.tool(
-        #     find_foo,
-        #     name="qdrant-find",
-        #     description=self.tool_settings.tool_find_description,
-        # )
+        self.tool(
+            hybrid_find_foo,
+            name="qdrant-hybrid-find",
+            description=self.tool_settings.tool_hybrid_find_description,
+        )
 
         self.tool(
             hybrid_find_foo,
