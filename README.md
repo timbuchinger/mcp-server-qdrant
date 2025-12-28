@@ -33,8 +33,8 @@ It acts as a semantic memory layer on top of the Qdrant database.
      - `collection_name` (string): Name of the collection to search in. This field is required if there are no default collection name.
                                    If there is a default collection name, this field is not enabled.
    - Returns: Information stored in the Qdrant database as separate messages
-3. `qdrant-hybrid-find`
-   - Advanced hybrid search combining semantic similarity and keyword matching using Qdrant's RRF/DBSF fusion
+3. `qdrant-search-notes`
+  - Advanced hybrid search combining semantic similarity and keyword matching using Qdrant's RRF/DBSF fusion
    - Input:
      - `query` (string): Query to use for searching
      - `collection_name` (string): Name of the collection to search in. This field is required if there are no default collection name.

@@ -428,13 +428,13 @@ class QdrantMCPServer(FastMCP):
 
         self.tool(
             hybrid_find_foo,
-            name="qdrant-hybrid-find",
+            name="qdrant-search-notes",
             description=self.tool_settings.tool_hybrid_find_description,
         )
 
         self.tool(
             hybrid_find_foo,
-            name="qdrant-hybrid-find",
+            name="qdrant-search-notes",
             description=self.tool_settings.tool_hybrid_find_description,
         )
 
