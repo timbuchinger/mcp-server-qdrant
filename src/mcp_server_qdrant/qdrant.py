@@ -21,6 +21,7 @@ class Entry(BaseModel):
 
     content: str
     metadata: Metadata | None = None
+    id: str | None = None
 
 
 class QdrantConnector:
@@ -90,6 +91,66 @@ class QdrantConnector:
             ],
         )
 
+    async def update(
+        self, point_id: str, entry: Entry, *, collection_name: str | None = None
+    ):
+        """
+        Update an existing entry in the Qdrant collection.
+        :param point_id: The ID of the point to update.
+        :param entry: The updated entry data.
+        :param collection_name: The name of the collection, optional. If not provided,
+                                the default collection is used.
+        """
+        collection_name = collection_name or self._default_collection_name
+        assert collection_name is not None
+
+        # Check if the point exists
+        point = await self._client.retrieve(
+            collection_name=collection_name, ids=[point_id]
+        )
+        if not point:
+            raise ValueError(f"Point with ID {point_id} not found")
+
+        # Embed the updated document
+        embeddings = await self._embedding_provider.embed_documents([entry.content])
+
+        # Update in Qdrant
+        vector_name = self._embedding_provider.get_vector_name()
+        payload = {"document": entry.content, METADATA_PATH: entry.metadata}
+        await self._client.upsert(
+            collection_name=collection_name,
+            points=[
+                models.PointStruct(
+                    id=point_id,
+                    vector={vector_name: embeddings[0]},
+                    payload=payload,
+                )
+            ],
+        )
+
+    async def delete(self, point_id: str, *, collection_name: str | None = None):
+        """
+        Delete an entry from the Qdrant collection.
+        :param point_id: The ID of the point to delete.
+        :param collection_name: The name of the collection, optional. If not provided,
+                                the default collection is used.
+        """
+        collection_name = collection_name or self._default_collection_name
+        assert collection_name is not None
+
+        # Check if the point exists
+        point = await self._client.retrieve(
+            collection_name=collection_name, ids=[point_id]
+        )
+        if not point:
+            raise ValueError(f"Point with ID {point_id} not found")
+
+        # Delete from Qdrant
+        await self._client.delete(
+            collection_name=collection_name,
+            points_selector=models.PointIdsList(points=[point_id]),
+        )
+
     async def search(
         self,
         query: str,
@@ -133,6 +194,7 @@ class QdrantConnector:
             Entry(
                 content=result.payload["document"],
                 metadata=result.payload.get("metadata"),
+                id=str(result.id),
             )
             for result in search_results.points
         ]
@@ -228,6 +290,7 @@ class QdrantConnector:
                 Entry(
                     content=result.payload["document"] if result.payload else "",
                     metadata=result.payload.get("metadata") if result.payload else None,
+                    id=str(result.id),
                 )
                 for result in search_results.points
             ]

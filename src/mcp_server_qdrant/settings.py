@@ -27,6 +27,14 @@ DEFAULT_TOOL_ADD_NOTE_DESCRIPTION = (
     "such as commands, code snippets, API references, or learning materials. "
     "The note will be automatically tagged and categorized for easy retrieval."
 )
+DEFAULT_TOOL_UPDATE_NOTE_DESCRIPTION = (
+    "Update an existing structured note in Qdrant. Use this tool when you need to modify "
+    "a previously stored note. Requires the unique identifier (ID) of the note to update."
+)
+DEFAULT_TOOL_DELETE_NOTE_DESCRIPTION = (
+    "Delete a note from Qdrant. Use this tool when you need to remove a stored note. "
+    "Requires the unique identifier (ID) of the note to delete."
+)
 
 METADATA_PATH = "metadata"
 
@@ -51,6 +59,14 @@ class ToolSettings(BaseSettings):
     tool_add_note_description: str = Field(
         default=DEFAULT_TOOL_ADD_NOTE_DESCRIPTION,
         validation_alias="TOOL_ADD_NOTE_DESCRIPTION",
+    )
+    tool_update_note_description: str = Field(
+        default=DEFAULT_TOOL_UPDATE_NOTE_DESCRIPTION,
+        validation_alias="TOOL_UPDATE_NOTE_DESCRIPTION",
+    )
+    tool_delete_note_description: str = Field(
+        default=DEFAULT_TOOL_DELETE_NOTE_DESCRIPTION,
+        validation_alias="TOOL_DELETE_NOTE_DESCRIPTION",
     )
 
 
