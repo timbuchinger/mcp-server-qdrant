@@ -440,11 +440,7 @@ class QdrantMCPServer(FastMCP):
 
         if not self.qdrant_settings.read_only:
             # Those methods can modify the database
-            self.tool(
-                store_foo,
-                name="qdrant-store",
-                description=self.tool_settings.tool_store_description,
-            )
+            # Note: we intentionally do not register `qdrant-store` here.
             self.tool(
                 add_note_foo,
                 name="qdrant-add-note",
