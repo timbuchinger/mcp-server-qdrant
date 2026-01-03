@@ -432,12 +432,6 @@ class QdrantMCPServer(FastMCP):
             description=self.tool_settings.tool_hybrid_find_description,
         )
 
-        self.tool(
-            hybrid_find_foo,
-            name="qdrant-search-notes",
-            description=self.tool_settings.tool_hybrid_find_description,
-        )
-
         if not self.qdrant_settings.read_only:
             # Those methods can modify the database
             # Note: we intentionally do not register `qdrant-store` here.
