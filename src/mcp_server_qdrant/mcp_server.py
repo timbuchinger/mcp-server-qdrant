@@ -324,13 +324,13 @@ class QdrantMCPServer(FastMCP):
                 query_filter=query_filter,
             )
             if not entries:
-                return None
+                return f"No results found for query '{query}'."
             content = [
                 f"Results for the query '{query}'",
             ]
             for entry in entries:
                 content.append(self.format_entry(entry))
-            return content
+            return "\n".join(content)
 
         async def hybrid_find(
             ctx: Context,
@@ -385,14 +385,16 @@ class QdrantMCPServer(FastMCP):
             )
 
             if not entries:
-                return None
+                return (
+                    f"No results found for query '{query}' "
+                    f"(fusion: {fusion_method})."
 
             content = [
                 f"Hybrid search results for '{query}' (fusion: {fusion_method})",
             ]
             for entry in entries:
                 content.append(self.format_entry(entry))
-            return content
+            return "\n".join(content)
 
         find_foo = find
         store_foo = store
