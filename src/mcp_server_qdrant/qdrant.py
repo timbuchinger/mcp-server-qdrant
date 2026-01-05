@@ -1,6 +1,9 @@
 import logging
 import uuid
 from typing import Any
+import re
+import math
+from collections import Counter, defaultdict
 
 from pydantic import BaseModel
 from qdrant_client import AsyncQdrantClient, models
@@ -22,6 +25,119 @@ class Entry(BaseModel):
     content: str
     metadata: Metadata | None = None
     id: str | None = None
+
+
+
+
+class BM25Indexer:
+    """
+    In-memory BM25 index used to compute sparse vectors locally.
+    This is a lightweight implementation intended to generate per-document
+    sparse vectors (term ids + BM25 weights) to send to Qdrant when the
+    server-side BM25 is unavailable.
+    """
+
+    def __init__(self, max_vocab: int = 32768, k1: float = 1.5, b: float = 0.75):
+        self.max_vocab = max_vocab
+        self.k1 = k1
+        self.b = b
+        self.vocab: dict[str, int] = {}
+        self.df: Counter = Counter()
+        self.N: int = 0
+        self.doc_lens_total: int = 0
+        # map doc_id -> (Counter(tokens), doc_len)
+        self._docs: dict[str, tuple[Counter, int]] = {}
+
+    def _tokenize(self, text: str) -> list[str]:
+        return re.findall(r"\w+", text.lower())
+
+    @property
+    def avgdl(self) -> float:
+        return (self.doc_lens_total / self.N) if self.N > 0 else 1.0
+
+    def _ensure_term(self, term: str) -> int | None:
+        """Ensure the term is in the vocabulary and return its index, or None if capacity exceeded."""
+        if term in self.vocab:
+            return self.vocab[term]
+        if len(self.vocab) >= self.max_vocab:
+            return None
+        idx = len(self.vocab)
+        self.vocab[term] = idx
+        return idx
+
+    def add_or_update(self, doc_id: str, text: str) -> tuple[list[int], list[float]]:
+        tokens = self._tokenize(text)
+        tf = Counter(tokens)
+        doc_len = len(tokens)
+
+        # If updating existing, remove old counts
+        if doc_id in self._docs:
+            old_tf, old_len = self._docs[doc_id]
+            # decrement df for terms present in old doc
+            for term in old_tf.keys():
+                self.df[term] -= 1
+                if self.df[term] <= 0:
+                    del self.df[term]
+            self.doc_lens_total -= old_len
+        else:
+            # new document increases N
+            self.N += 1
+
+        # add new counts
+        for term in tf.keys():
+            self.df[term] += 1
+            self._ensure_term(term)
+        self.doc_lens_total += doc_len
+        self._docs[doc_id] = (tf, doc_len)
+
+        # compute BM25 scores for the document
+        ids = []
+        values = []
+        for term, freq in tf.items():
+            idx = self.vocab.get(term)
+            if idx is None:
+                continue
+            df = self.df.get(term, 0)
+            # idf with add-one smoothing to avoid negative/zero values
+            idf = math.log(1 + (self.N - df + 0.5) / (df + 0.5))
+            denom = freq + self.k1 * (1 - self.b + self.b * (doc_len / max(1.0, self.avgdl)))
+            score = idf * ((freq * (self.k1 + 1)) / denom)
+            ids.append(idx)
+            values.append(float(score))
+
+        return ids, values
+
+    def transform(self, text: str) -> tuple[list[int], list[float]]:
+        """Compute BM25 scores for a query text against the current index without modifying counts."""
+        tokens = self._tokenize(text)
+        tf = Counter(tokens)
+        doc_len = len(tokens)
+        ids = []
+        values = []
+        if self.N == 0:
+            return ids, values
+        for term, freq in tf.items():
+            idx = self.vocab.get(term)
+            if idx is None:
+                continue
+            df = self.df.get(term, 0)
+            idf = math.log(1 + (self.N - df + 0.5) / (df + 0.5))
+            denom = freq + self.k1 * (1 - self.b + self.b * (doc_len / max(1.0, self.avgdl)))
+            score = idf * ((freq * (self.k1 + 1)) / denom)
+            ids.append(idx)
+            values.append(float(score))
+        return ids, values
+
+    def remove(self, doc_id: str) -> None:
+        if doc_id not in self._docs:
+            return
+        old_tf, old_len = self._docs.pop(doc_id)
+        for term in old_tf.keys():
+            self.df[term] -= 1
+            if self.df[term] <= 0:
+                del self.df[term]
+        self.doc_lens_total -= old_len
+        self.N = max(0, self.N - 1)
 
 
 class QdrantConnector:
@@ -52,6 +168,8 @@ class QdrantConnector:
             location=qdrant_url, api_key=qdrant_api_key, path=qdrant_local_path
         )
         self._field_indexes = field_indexes
+        # BM25 index used to compute sparse vectors locally when server-side BM25 isn't available
+        self._bm25 = BM25Indexer()
 
     async def get_collection_names(self) -> list[str]:
         """
@@ -72,23 +190,26 @@ class QdrantConnector:
         assert collection_name is not None
         await self._ensure_collection_exists(collection_name)
 
-        # Embed the document
-        # ToDo: instead of embedding text explicitly, use `models.Document`,
-        # it should unlock usage of server-side inference.
+        # Embed the document (dense)
         embeddings = await self._embedding_provider.embed_documents([entry.content])
+
+        # Generate an id and build a local BM25 sparse vector
+        point_id = uuid.uuid4().hex
+        sparse_ids, sparse_values = self._bm25.add_or_update(point_id, entry.content)
 
         # Add to Qdrant
         vector_name = self._embedding_provider.get_vector_name()
         payload = {"document": entry.content, METADATA_PATH: entry.metadata}
+        vector_payload = {vector_name: embeddings[0]}
+        if sparse_ids:
+            vector_payload["sparse"] = models.SparseVector(ids=sparse_ids, values=sparse_values)
+
         await self._client.upsert(
             collection_name=collection_name,
             points=[
                 models.PointStruct(
-                    id=uuid.uuid4().hex,
-                    vector={
-                        vector_name: embeddings[0],
-                        "sparse": models.Document(text=entry.content, model="bm25"),
-                    },
+                    id=point_id,
+                    vector=vector_payload,
                     payload=payload,
                 )
             ],
@@ -114,21 +235,25 @@ class QdrantConnector:
         if not point:
             raise ValueError(f"Point with ID {point_id} not found")
 
-        # Embed the updated document
+        # Embed the updated document (dense)
         embeddings = await self._embedding_provider.embed_documents([entry.content])
+
+        # Update BM25 index and build sparse vector
+        sparse_ids, sparse_values = self._bm25.add_or_update(point_id, entry.content)
 
         # Update in Qdrant
         vector_name = self._embedding_provider.get_vector_name()
         payload = {"document": entry.content, METADATA_PATH: entry.metadata}
+        vector_payload = {vector_name: embeddings[0]}
+        if sparse_ids:
+            vector_payload["sparse"] = models.SparseVector(ids=sparse_ids, values=sparse_values)
+
         await self._client.upsert(
             collection_name=collection_name,
             points=[
                 models.PointStruct(
                     id=point_id,
-                    vector={
-                        vector_name: embeddings[0],
-                        "sparse": models.Document(text=entry.content, model="bm25"),
-                    },
+                    vector=vector_payload,
                     payload=payload,
                 )
             ],
@@ -258,13 +383,19 @@ class QdrantConnector:
             # Note: This assumes sparse vectors are configured in the collection
             # In practice, you'd want to check collection config first
             try:
-                prefetch_queries.append(
-                    models.Prefetch(
-                        query=models.Document(text=query, model="bm25"),
-                        using="sparse",
-                        limit=sparse_limit,
+                # Build a sparse query vector locally using BM25
+                sparse_ids, sparse_values = self._bm25.transform(query)
+                if sparse_ids:
+                    prefetch_queries.append(
+                        models.Prefetch(
+                            query=models.SparseVector(ids=sparse_ids, values=sparse_values),
+                            using="sparse",
+                            limit=sparse_limit,
+                        )
                     )
-                )
+                else:
+                    # No sparse query vector available; skip sparse prefetch
+                    pass
             except Exception:
                 # If sparse vectors aren't available, fallback to dense-only search
                 logger.warning(
@@ -324,14 +455,19 @@ class QdrantConnector:
 
             # Use the vector name as defined in the embedding provider
             vector_name = self._embedding_provider.get_vector_name()
+            vectors_config = {
+                vector_name: models.VectorParams(
+                    size=vector_size,
+                    distance=models.Distance.COSINE,
+                )
+            }
+            # Reserve a sparse vector space for BM25 with the configured vocabulary cap
+            vectors_config["sparse"] = models.VectorParams(
+                size=self._bm25.max_vocab, distance=models.Distance.COSINE
+            )
             await self._client.create_collection(
                 collection_name=collection_name,
-                vectors_config={
-                    vector_name: models.VectorParams(
-                        size=vector_size,
-                        distance=models.Distance.COSINE,
-                    )
-                },
+                vectors_config=vectors_config,
             )
 
             # Create payload indexes if configured
