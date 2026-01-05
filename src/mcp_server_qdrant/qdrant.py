@@ -85,7 +85,10 @@ class QdrantConnector:
             points=[
                 models.PointStruct(
                     id=uuid.uuid4().hex,
-                    vector={vector_name: embeddings[0]},
+                    vector={
+                        vector_name: embeddings[0],
+                        "sparse": models.Document(text=entry.content, model="bm25"),
+                    },
                     payload=payload,
                 )
             ],
@@ -122,7 +125,10 @@ class QdrantConnector:
             points=[
                 models.PointStruct(
                     id=point_id,
-                    vector={vector_name: embeddings[0]},
+                    vector={
+                        vector_name: embeddings[0],
+                        "sparse": models.Document(text=entry.content, model="bm25"),
+                    },
                     payload=payload,
                 )
             ],
