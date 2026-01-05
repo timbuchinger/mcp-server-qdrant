@@ -170,6 +170,8 @@ class QdrantConnector:
         self._field_indexes = field_indexes
         # BM25 index used to compute sparse vectors locally when server-side BM25 isn't available
         self._bm25 = BM25Indexer()
+        # Determine whether to include sparse vectors (avoid for in-memory/local clients)
+        self._use_sparse = bool(self._qdrant_url and self._qdrant_url != ":memory:")
 
     async def get_collection_names(self) -> list[str]:
         """
@@ -201,8 +203,9 @@ class QdrantConnector:
         vector_name = self._embedding_provider.get_vector_name()
         payload = {"document": entry.content, METADATA_PATH: entry.metadata}
         vector_payload = {vector_name: embeddings[0]}
-        if sparse_ids:
-            vector_payload["sparse"] = models.SparseVector(ids=sparse_ids, values=sparse_values)
+        # Only include sparse vectors for non-local/remote Qdrant instances
+        if self._use_sparse and sparse_ids:
+            vector_payload["sparse"] = models.SparseVector(indices=sparse_ids, values=sparse_values)
 
         await self._client.upsert(
             collection_name=collection_name,
@@ -245,8 +248,9 @@ class QdrantConnector:
         vector_name = self._embedding_provider.get_vector_name()
         payload = {"document": entry.content, METADATA_PATH: entry.metadata}
         vector_payload = {vector_name: embeddings[0]}
-        if sparse_ids:
-            vector_payload["sparse"] = models.SparseVector(ids=sparse_ids, values=sparse_values)
+        # Only include sparse vectors for non-local/remote Qdrant instances
+        if self._use_sparse and sparse_ids:
+            vector_payload["sparse"] = models.SparseVector(indices=sparse_ids, values=sparse_values)
 
         await self._client.upsert(
             collection_name=collection_name,
@@ -383,18 +387,22 @@ class QdrantConnector:
             # Note: This assumes sparse vectors are configured in the collection
             # In practice, you'd want to check collection config first
             try:
-                # Build a sparse query vector locally using BM25
-                sparse_ids, sparse_values = self._bm25.transform(query)
-                if sparse_ids:
-                    prefetch_queries.append(
-                        models.Prefetch(
-                            query=models.SparseVector(ids=sparse_ids, values=sparse_values),
-                            using="sparse",
-                            limit=sparse_limit,
+                # Build a sparse query vector locally using BM25 if supported
+                if self._use_sparse:
+                    sparse_ids, sparse_values = self._bm25.transform(query)
+                    if sparse_ids:
+                        prefetch_queries.append(
+                            models.Prefetch(
+                                query=models.SparseVector(indices=sparse_ids, values=sparse_values),
+                                using="sparse",
+                                limit=sparse_limit,
+                            )
                         )
-                    )
+                    else:
+                        # No sparse query vector available; skip sparse prefetch
+                        pass
                 else:
-                    # No sparse query vector available; skip sparse prefetch
+                    # Sparse not enabled for this client; skip sparse prefetch
                     pass
             except Exception:
                 # If sparse vectors aren't available, fallback to dense-only search
@@ -462,9 +470,10 @@ class QdrantConnector:
                 )
             }
             # Reserve a sparse vector space for BM25 with the configured vocabulary cap
-            vectors_config["sparse"] = models.VectorParams(
-                size=self._bm25.max_vocab, distance=models.Distance.COSINE
-            )
+            if self._use_sparse:
+                vectors_config["sparse"] = models.VectorParams(
+                    size=self._bm25.max_vocab, distance=models.Distance.COSINE
+                )
             await self._client.create_collection(
                 collection_name=collection_name,
                 vectors_config=vectors_config,
