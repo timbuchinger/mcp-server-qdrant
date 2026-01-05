@@ -3,6 +3,8 @@ import uuid
 from typing import Any
 import re
 import math
+import pickle
+from pathlib import Path
 from collections import Counter, defaultdict
 
 from pydantic import BaseModel
@@ -139,6 +141,38 @@ class BM25Indexer:
         self.doc_lens_total -= old_len
         self.N = max(0, self.N - 1)
 
+    def save(self, path: str) -> None:
+        """Persist the BM25 index to disk using pickle."""
+        data = {
+            "max_vocab": self.max_vocab,
+            "k1": self.k1,
+            "b": self.b,
+            "vocab": self.vocab,
+            "df": dict(self.df),
+            "N": self.N,
+            "doc_lens_total": self.doc_lens_total,
+            "_docs": {doc_id: (dict(tf), doc_len) for doc_id, (tf, doc_len) in self._docs.items()},
+        }
+        p = Path(path)
+        if not p.parent.exists():
+            p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "wb") as f:
+            pickle.dump(data, f)
+
+    def load(self, path: str) -> None:
+        """Load a persisted BM25 index from disk."""
+        p = Path(path)
+        with open(p, "rb") as f:
+            data = pickle.load(f)
+        self.max_vocab = data.get("max_vocab", self.max_vocab)
+        self.k1 = data.get("k1", self.k1)
+        self.b = data.get("b", self.b)
+        self.vocab = data.get("vocab", {})
+        self.df = Counter(data.get("df", {}))
+        self.N = data.get("N", 0)
+        self.doc_lens_total = data.get("doc_lens_total", 0)
+        self._docs = {doc_id: (Counter(tf), doc_len) for doc_id, (tf, doc_len) in data.get("_docs", {}).items()}
+
 
 class QdrantConnector:
     """
@@ -159,6 +193,7 @@ class QdrantConnector:
         embedding_provider: EmbeddingProvider,
         qdrant_local_path: str | None = None,
         field_indexes: dict[str, models.PayloadSchemaType] | None = None,
+        bm25_path: str | None = None,
     ):
         self._qdrant_url = qdrant_url.rstrip("/") if qdrant_url else None
         self._qdrant_api_key = qdrant_api_key
@@ -170,6 +205,14 @@ class QdrantConnector:
         self._field_indexes = field_indexes
         # BM25 index used to compute sparse vectors locally when server-side BM25 isn't available
         self._bm25 = BM25Indexer()
+        # Optional path to persist BM25 index; if provided load on startup or save after changes
+        self._bm25_path = bm25_path
+        if self._bm25_path and Path(self._bm25_path).exists():
+            try:
+                self._bm25.load(self._bm25_path)
+            except Exception:
+                # If loading fails, continue with an empty index (rebuild required)
+                pass
         # Determine whether to include sparse vectors (avoid for in-memory/local clients)
         self._use_sparse = bool(self._qdrant_url and self._qdrant_url != ":memory:")
 
@@ -217,6 +260,12 @@ class QdrantConnector:
                 )
             ],
         )
+        # Persist BM25 index after adding document
+        if self._bm25_path:
+            try:
+                self._bm25.save(self._bm25_path)
+            except Exception:
+                pass
 
     async def update(
         self, point_id: str, entry: Entry, *, collection_name: str | None = None
@@ -262,6 +311,12 @@ class QdrantConnector:
                 )
             ],
         )
+        # Persist BM25 index after updating document
+        if self._bm25_path:
+            try:
+                self._bm25.save(self._bm25_path)
+            except Exception:
+                pass
 
     async def delete(self, point_id: str, *, collection_name: str | None = None):
         """
@@ -279,6 +334,18 @@ class QdrantConnector:
         )
         if not point:
             raise ValueError(f"Point with ID {point_id} not found")
+
+        # Remove from BM25 index and persist
+        try:
+            self._bm25.remove(point_id)
+            if self._bm25_path:
+                try:
+                    self._bm25.save(self._bm25_path)
+                except Exception:
+                    pass
+        except Exception:
+            # If BM25 isn't tracking this point or removal fails, ignore
+            pass
 
         # Delete from Qdrant
         await self._client.delete(
